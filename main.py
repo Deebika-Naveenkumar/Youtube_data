@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 
 # Initialize YouTube API client
-api_key = 'AIzaSyDcgQsMNA48kcK20X3TrpvogL8Lfd13HDg'
+api_key = 'Enter valid api key'
 youtube = build('youtube', 'v3', developerKey=api_key)
 # connecting to mysql database
 myconnection = pymysql.connect(host="127.0.0.1", user="root", passwd="1234")
