@@ -179,30 +179,57 @@ def get_video_details(youtube, v_ids):
 
 # function to get comment details: 
 def get_video_comments(youtube, video_ids):
-    com_data=[]  
-    try:   
-        for video_id in video_ids:
-            request=youtube.commentThreads().list(
-                                            part='snippet',
-                                            videoId=video_id,
-                                            maxResults=100)
-            response=request.execute()
-            
-            for item in response['items']:
-                data={ 
-                       'video_id': item['snippet']['videoId'],
-                       'comment_id': item['snippet']['topLevelComment']['id'],
-                       'comment_desc': item['snippet']['topLevelComment']["snippet"]["textDisplay"],
-                       'comment_author': item['snippet']['topLevelComment']["snippet"]["authorDisplayName"],
-                       'comment_published_date': parse_time(item['snippet']['topLevelComment']["snippet"]["publishedAt"]).strftime('%Y-%m-%d %H:%M:%S')
-                       }
-                
-                com_data.append(data)
-    except Exception:
-        pass
-
-    return com_data
+    all_comments = []
+    videos_no_comments = []
     
+    for video_id in video_ids:
+        try:
+            request = youtube.commentThreads().list(
+                part="snippet,replies",
+                videoId=video_id,
+                maxResults=100
+            )
+            response = request.execute()
+            
+            if len(response['items'])>100:
+
+                for item in response['items']:
+                    data={'video_id':item['snippet']['videoId'],
+                        'comment_id':item['snippet']['topLevelComment']['id'],
+                        'comment_desc':item['snippet']['topLevelComment']['snippet']['textDisplay'],
+                        'comment_author':item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
+                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt']).strftime('%Y-%m-%d %H:%M:%S'),
+                    }
+                    all_comments.append(data)
+            
+                    if 'nextPageToken' in response:
+                        request = youtube.commentThreads().list(
+                        part="snippet",
+                        textFormat = "plainText",
+                        videoId = video_id,
+                        maxResults = 100,
+                        pageToken = response.get('nextPageToken')
+                        )
+                    else:
+                        break
+            else:
+                for item in response['items']:
+                    data={'video_id':item['snippet']['videoId'],
+                        'comment_id':item['snippet']['topLevelComment']['id'],
+                        'comment_desc':item['snippet']['topLevelComment']['snippet']['textDisplay'],
+                        'comment_author':item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
+                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt']).strftime('%Y-%m-%d %H:%M:%S'),
+                    }
+                    all_comments.append(data)
+
+        except:
+            videos_no_comments.append(video_id)
+
+    if all_comments:
+        return all_comments
+    else:
+        return "No comments available"
+                
 # create database in mysql
 myconnection.cursor().execute("""CREATE DATABASE IF NOT EXISTS YOUTUBE""")
 
@@ -218,6 +245,14 @@ myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.CHANNEL
         playlist_id text,
         published_date timestamp
         )""")
+
+# changing the datatypes from int to bigint
+myconnection.cursor().execute("""
+    ALTER TABLE YOUTUBE.CHANNEL
+    MODIFY COLUMN views bigint,
+    MODIFY COLUMN number_of_subscribers bigint,
+    MODIFY COLUMN number_of_videos bigint
+""")
 
 # create videos table in mysql
 myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.VIDEOS
@@ -235,6 +270,14 @@ myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.VIDEOS
             commentCount int,
             durationinsec int
             )""")
+
+# changing the datatypes from int to bigint
+myconnection.cursor().execute("""
+    ALTER TABLE YOUTUBE.VIDEOS
+    MODIFY COLUMN viewCount bigint,
+    MODIFY COLUMN likeCount bigint,                        
+    MODIFY COLUMN commentCount bigint
+""")
 
 # create comments table in mysql
 myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.COMMENTS
