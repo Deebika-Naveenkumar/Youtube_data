@@ -10,8 +10,52 @@ import plotly.express as px
 # Initialize YouTube API client
 api_key = 'Enter valid api key'
 youtube = build('youtube', 'v3', developerKey=api_key)
-# connecting to mysql database
-myconnection = pymysql.connect(host="127.0.0.1", user="root", passwd="1234")
+
+# Function to get a database connection
+def get_connection():
+    try:
+        # connect to MySQL server
+        connection = pymysql.connect(
+            host='127.0.0.1',
+            user='root',
+            password='1234'
+        )
+        # check if the 'youtube' database exists
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW DATABASES LIKE 'youtube'")
+            result = cursor.fetchone()
+            if not result:
+                # Create the 'youtube' database if it doesn't exist
+                cursor.execute("CREATE DATABASE IF NOT EXISTS youtube")
+        # connect to the 'youtube' database
+        connection = pymysql.connect(
+            host='127.0.0.1',
+            user='root',
+            password='1234',
+            database='youtube'
+        )
+        return connection
+    
+    except Exception as e:
+        st.write(f"Error: {e}")
+        return None
+
+# Check if a table exists in the database
+def table_exists(cursor, table_name):
+    cursor.execute(f"""
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = '{table_name}'
+        AND table_schema = DATABASE();
+    """)
+    return cursor.fetchone()[0] == 1
+
+# Create table if it doesn't exist
+def create_table_if_not_exists(cursor, table_name, create_query, alter_query):
+    if not table_exists(cursor, table_name):
+        cursor.execute(create_query)
+        cursor.execute(alter_query)
+        cursor.connection.commit()
 
 # to change the streamlit background color
 def set_background_color(color):
@@ -75,8 +119,9 @@ def parse_time(time_stamp):
     else:
         return dt.strptime(time_stamp,'%Y-%m-%dT%H:%M:%SZ')
 
-# function to get channel details:
-def get_channel_details(youtube, channel_id):
+# Function to cache channel details
+@st.cache_data
+def get_channel_details(channel_id):
     channel_id = channel_id.strip()
     channel_data = []
     request = youtube.channels().list(
@@ -85,20 +130,20 @@ def get_channel_details(youtube, channel_id):
     response = request.execute()
   
     data = {'channel_id': response['items'][0]['id'],
-        'channel_name': response['items'][0]['snippet']['title'],
-        'channel_description': response['items'][0]['snippet']['description'],
-        'number_of_subscribers': int(response['items'][0]['statistics']['subscriberCount']),
-        'views': int(response['items'][0]['statistics']['viewCount']),
-        'number_of_videos': int(response['items'][0]['statistics']['videoCount']),
-        'playlist_id': response['items'][0]['contentDetails']['relatedPlaylists']['uploads'],
-        'published_date': parse_time(response['items'][0]["snippet"]["publishedAt"]).strftime('%Y-%m-%d %H:%M:%S')
-          }
+            'channel_name': response['items'][0]['snippet']['title'],
+            'channel_description': response['items'][0]['snippet']['description'],
+            'number_of_subscribers': int(response['items'][0]['statistics']['subscriberCount']),
+            'views': int(response['items'][0]['statistics']['viewCount']),
+            'number_of_videos': int(response['items'][0]['statistics']['videoCount']),
+            'playlist_id': response['items'][0]['contentDetails']['relatedPlaylists']['uploads'],
+            'published_date': parse_time(response['items'][0]["snippet"]["publishedAt"]).strftime('%Y-%m-%d %H:%M:%S')
+            }
     channel_data.append(data)
     
     return channel_data
 
 # to get video ids:
-def get_channel_videos(youtube, channel_id):
+def get_channel_videos(channel_id):
     video_ids = []
     # get Uploads playlist id
     response = youtube.channels().list(id=channel_id, 
@@ -132,8 +177,10 @@ def get_channel_videos(youtube, channel_id):
 
     return video_ids
 
-# function to get video details:
-def get_video_details(youtube, v_ids):
+
+# Function to cache video details
+@st.cache_data
+def get_video_details(v_ids):
     video_stats = []
     for i in range(0, len(v_ids)):
         response = youtube.videos().list(
@@ -152,7 +199,7 @@ def get_video_details(youtube, v_ids):
         
         view_count = 0
         # Check if viewCount key is present in the response
-        if 'viewCount' in response['items'][0]["statistics"]:
+        if 'viewCount'  in response['items'][0]["statistics"]:
             view_count = int(response['items'][0]["statistics"]["viewCount"])
 
         dislike_count=0
@@ -177,8 +224,9 @@ def get_video_details(youtube, v_ids):
         video_stats.append(data)
     return video_stats
 
-# function to get comment details: 
-def get_video_comments(youtube, video_ids):
+# Function to cache comment details retrieval
+@st.cache_data
+def get_video_comments(video_ids):
     all_comments = []
     videos_no_comments = []
     
@@ -229,12 +277,9 @@ def get_video_comments(youtube, video_ids):
         return all_comments
     else:
         return "No comments available"
-                
-# create database in mysql
-myconnection.cursor().execute("""CREATE DATABASE IF NOT EXISTS YOUTUBE""")
 
 # create channel table in mysql
-myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.CHANNEL
+CREATE_TABLE_CHANNEL = """CREATE TABLE IF NOT EXISTS YOUTUBE.CHANNEL
         (
         channel_id varchar(100) primary key,
         channel_name text,
@@ -244,18 +289,15 @@ myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.CHANNEL
         number_of_videos int,
         playlist_id text,
         published_date timestamp
-        )""")
+        )"""
 
-# changing the datatypes from int to bigint
-myconnection.cursor().execute("""
+ALTER_TABLE_CHANNEL = """
     ALTER TABLE YOUTUBE.CHANNEL
     MODIFY COLUMN views bigint,
     MODIFY COLUMN number_of_subscribers bigint,
     MODIFY COLUMN number_of_videos bigint
-""")
-
-# create videos table in mysql
-myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.VIDEOS
+"""
+CREATE_TABLE_VIDEOS = """CREATE TABLE IF NOT EXISTS YOUTUBE.VIDEOS
             (
             c_id text,
             c_name text,
@@ -269,194 +311,258 @@ myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.VIDEOS
             favoriteCount int,
             commentCount int,
             durationinsec int
-            )""")
+            )"""
 
-# changing the datatypes from int to bigint
-myconnection.cursor().execute("""
+ALTER_TABLE_VIDEOS = """
     ALTER TABLE YOUTUBE.VIDEOS
     MODIFY COLUMN viewCount bigint,
     MODIFY COLUMN likeCount bigint,                        
     MODIFY COLUMN commentCount bigint
-""")
-
-# create comments table in mysql
-myconnection.cursor().execute("""CREATE TABLE IF NOT EXISTS YOUTUBE.COMMENTS
+"""
+CREATE_TABLE_COMMENTS = """CREATE TABLE IF NOT EXISTS YOUTUBE.COMMENTS
                 (
                 video_id text,
                 comment_id varchar(100) primary key,
                 comment_desc text,
                 comment_author text,
                 comment_published_date timestamp
-                )""")
+                )"""
 
-# option menu in streamlit
+ALTER_TABLE_COMMENTS = "ALTER TABLE YOUTUBE.COMMENTS CHANGE comment_id comment_id VARCHAR(255)"
+
+# Option menu in Streamlit
 with st.sidebar:
     selected = option_menu(
-        menu_title = "Menu",
-        options = ["Home", "Questions"],
-        icons = ["house-door"],
-        menu_icon = ["emoji-smile"],
-        default_index = 0
+        menu_title="Menu",
+        options=["Home", "Questions"],
+        icons=["house-door"],
+        menu_icon="emoji-smile",
+        default_index=1
     )
 
 # Home menu of Streamlit
 if selected == "Home":
     st.title(":blue[YOUTUBE DATA HARVESTING AND WAREHOUSING USING SQL AND STREAMLIT]")
-    c_id = st.sidebar.text_input("Enter channel id:")  
+    c_id = st.sidebar.text_input("Enter channel id:")
 
-    # display channel data and migrate to sql
-    col1,col2 = st.columns(2)
+    # Display channel data and migrate to SQL
+    col1, col2 = st.columns(2)
     
     with col1:
+        connection = get_connection()
+        cursor = connection.cursor()
+
         if st.sidebar.button("Get channel data"):
             if c_id:
                 try:
-                    channel_df = pd.DataFrame(get_channel_details(youtube,c_id))
-                    st.dataframe(channel_df)
-                    
-                except Exception as e:
-                    st.sidebar.warning("Please enter a valid channel id")
+                    # Create table if it doesn't exist
+                    create_table_if_not_exists(cursor, "youtube.channel", CREATE_TABLE_CHANNEL,ALTER_TABLE_CHANNEL)
+                    channel_df = pd.DataFrame(get_channel_details(c_id))
+                    st.write(channel_df)
+                except Exception:
+                    st.sidebar.warning("Please enter valid channel id")
             else:
                 st.sidebar.warning("Please enter a channel id")
 
+        cursor.close()
+        connection.close()
+
     with col2:
+        connection = get_connection()
+        cursor = connection.cursor()
+
         if st.sidebar.button("Move channel data to SQL"):
-            channel_df = pd.DataFrame(get_channel_details(youtube,c_id))
+            # Create table if it doesn't exist
+            create_table_if_not_exists(cursor, "youtube.channel", CREATE_TABLE_CHANNEL,ALTER_TABLE_CHANNEL)
+            channel_df = pd.DataFrame(get_channel_details(c_id))
             len1 = ",".join(["%s"] * len(channel_df.columns))
             sql = f"INSERT INTO YOUTUBE.CHANNEL VALUES ({len1})"
+
             try:
                 for i in range(len(channel_df)):
-                    myconnection.cursor().execute(sql,tuple(channel_df.iloc[i]))
-                    myconnection.commit()
+                   cursor.execute(sql, tuple(channel_df.iloc[i]))
+                   cursor.connection.commit()
                 st.sidebar.success("Channel Data moved to SQL successfully")
-            except Exception as e:
+            except Exception:
                 st.sidebar.error("Data Already Exists!")
 
-    # display videos data and migrate to sql
-    col3,col4 = st.columns(2)
+        cursor.close()
+        connection.close()
+
+    # Display videos data and migrate to SQL
+    col3, col4 = st.columns(2)
 
     with col3:
+        connection = get_connection()
+        cursor = connection.cursor()
+
         if st.sidebar.button("Get video data"):
-            video_ids = get_channel_videos(youtube, c_id)
-            video_df = pd.DataFrame(get_video_details(youtube, video_ids))
+            # Create table if it doesn't exist
+            create_table_if_not_exists(cursor, "youtube.videos", CREATE_TABLE_VIDEOS,ALTER_TABLE_VIDEOS)
+            video_ids = get_channel_videos(c_id)
+            video_df = pd.DataFrame(get_video_details(video_ids))
             st.dataframe(video_df)
+
+        cursor.close()
+        connection.close()
             
     with col4:
+        connection = get_connection()
+        cursor = connection.cursor()
+
         if st.sidebar.button("Move videos data to SQL"):
-            video_ids = get_channel_videos(youtube, c_id)
-            video_df = pd.DataFrame(get_video_details(youtube, video_ids))
+            # Create table if it doesn't exist
+            create_table_if_not_exists(cursor, "youtube.videos", CREATE_TABLE_VIDEOS,ALTER_TABLE_VIDEOS)
+            video_ids = get_channel_videos(c_id)
+            video_df = pd.DataFrame(get_video_details(video_ids))
             len2 = ",".join(["%s"] * len(video_df.columns))
             sql = f"INSERT INTO YOUTUBE.VIDEOS VALUES ({len2})"
+
             try:
                 for i in range(len(video_df)):
-                    myconnection.cursor().execute(sql, tuple(video_df.iloc[i]))
-                    myconnection.commit()
+                   cursor.execute(sql, tuple(video_df.iloc[i]))
+                   cursor.connection.commit()
                 st.sidebar.success("Videos Data moved to SQL successfully")
-            except:
-                    st.sidebar.error("Data Already Exists!")
-        
-    # display comments data and migrate to sql
-    col5,col6=st.columns(2)
-
-    with col5:
-        if st.sidebar.button("Get comments data"):
-            video_ids = get_channel_videos(youtube, c_id)
-            comment_df = get_video_comments(youtube,video_ids)
-            st.write(pd.DataFrame(comment_df))
-           
-    with col6:
-        if st.sidebar.button("Move comments data to SQL"):
-            video_ids = get_channel_videos(youtube, c_id)
-            comment_df = pd.DataFrame(get_video_comments(youtube,video_ids))
-            len3 = ",".join(["%s"] * len(comment_df.columns))
-            sql = f"INSERT INTO YOUTUBE.COMMENTS VALUES ({len3})"
- 
-            try:
-                for i in range(len(comment_df)):
-                    myconnection.cursor().execute(sql, tuple(comment_df.iloc[i]))
-                    myconnection.commit()
-                st.sidebar.success("Data moved to SQL successfully")
-            except:
+            except Exception:
                 st.sidebar.error("Data Already Exists!")
 
+        cursor.close()
+        connection.close()
+
+    # Display comments data and migrate to SQL
+    col5, col6 = st.columns(2)
+
+    with col5:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        if st.sidebar.button("Get comments data"):
+            # Create table if it doesn't exist
+            create_table_if_not_exists(cursor, "youtube.comments", CREATE_TABLE_COMMENTS,ALTER_TABLE_COMMENTS)
+            video_ids = get_channel_videos(c_id)
+            comments = get_video_comments(video_ids)
+            comment_df = pd.DataFrame(comments)
+            st.write(comment_df)
+
+        cursor.close()
+        connection.close()
+
+    with col6:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        if st.sidebar.button("Move comments data to SQL"):
+            # Create table if it doesn't exist
+            create_table_if_not_exists(cursor, "youtube.comments", CREATE_TABLE_COMMENTS,ALTER_TABLE_COMMENTS)
+            video_ids = get_channel_videos(c_id)
+            comments = get_video_comments(video_ids)
+            comment_df = pd.DataFrame(comments)
+            len3 = ",".join(["%s"] * len(comment_df.columns))
+            sql = f"INSERT INTO YOUTUBE.COMMENTS VALUES ({len3})"
+
+            try:
+                for i in range(len(comment_df)):
+                    cursor.execute(sql, tuple(comment_df.iloc[i]))
+                    cursor.connection.commit()
+                st.sidebar.success("Comments Data moved to SQL successfully")
+            except Exception:
+                st.sidebar.error("Data Already Exists!")
+
+        cursor.close()
+        connection.close()
+
+# to execute SQL queries
+def execute_query(query):
+    return pd.read_sql_query(query, get_connection())
+
+# to create plots
+def create_plot(df, plot_type, **kwargs):
+    if plot_type == 'pie':
+        fig = px.pie(df, **kwargs)
+    elif plot_type == 'bar':
+        fig = px.bar(df, **kwargs)
+    elif plot_type == 'line':
+        fig = px.line(df, **kwargs)
+    elif plot_type == 'scatter':
+        fig = px.scatter(df, **kwargs)
+    else:
+        fig = None
+    if fig:
+        fig.update_layout(title_x=0.3)
+        st.plotly_chart(fig)
+
 # On selecting Questions menu
-elif selected == "Questions":
-    quest_1 = "What are the names of all the videos and their corresponding channels?"
-    quest_2 = "Which channels have the most number of videos, and how many videos do they have?"
-    quest_3 = "What are the top 10 most viewed videos and their respective channels?"
-    quest_4 = "How many comments were made on each video, and what are their corresponding video names?"
-    quest_5 = "Which videos have the highest number of likes, and what are their corresponding channel names?"
-    quest_6 = "What is the total number of likes and dislikes for each video, and what are their corresponding video names?"
-    quest_7 = "What is the total number of views for each channel, and what are their corresponding channel names?"
-    quest_8 = "What are the names of all the channels that have published videos in the year2022?"
-    quest_9 = "What is the average duration of all videos in each channel, and what are their corresponding channel names?"
-    quest_10 = "Which videos have the highest number of comments, and what are their corresponding channel names?"
-
-    question=st.selectbox("Select any question",["Select any question",quest_1,quest_2,quest_3,quest_4,quest_5,quest_6,quest_7,quest_8,quest_9,quest_10])
+if selected == "Questions":
+    questions = [
+        "What are the names of all the videos and their corresponding channels?",
+        "Which channels have the most number of videos, and how many videos do they have?",
+        "What are the top 10 most viewed videos and their respective channels?",
+        "How many comments were made on each video, and what are their corresponding video names?",
+        "Which videos have the highest number of likes, and what are their corresponding channel names?",
+        "What is the total number of likes and dislikes for each video, and what are their corresponding video names?",
+        "What is the total number of views for each channel, and what are their corresponding channel names?",
+        "What are the names of all the channels that have published videos in the year 2022?",
+        "What is the average duration of all videos in each channel, and what are their corresponding channel names?",
+        "Which videos have the highest number of comments, and what are their corresponding channel names?"
+    ]
     
-    if question==quest_1:
-        st.write(pd.read_sql_query("SELECT v_title as Video_name,c_name as Channel_name FROM youtube.videos",myconnection))
-        df_1 = pd.read_sql_query("SELECT * FROM youtube.channel",myconnection)
-        fig1 = px.pie(df_1,names='channel_name',values='number_of_videos',hole=0.5,title="Video Count in each Channel")
-        st.plotly_chart(fig1)
-        
-    elif question == quest_2:
-        st.write(pd.read_sql_query("SELECT channel_name as Channel_name, number_of_videos as Video_count FROM youtube.channel where number_of_videos in (select max(number_of_videos) from youtube.channel)",myconnection))
-        df_2 = pd.read_sql_query("SELECT * FROM youtube.channel",myconnection)
-        fig2 = px.bar(df_2,x='channel_name',y='number_of_videos',color='views',title="Channel vs Video Count")
-        fig2.update_layout(title_x=0.3)
-        st.plotly_chart(fig2)
+    question = st.selectbox("Select any question", ["Select any question"] + questions)
 
-    elif question == quest_3:
-        df_3 = pd.read_sql_query("SELECT v_id as Video_Id,v_title as Video_title, c_name as Channel_name,viewCount as View_count FROM youtube.videos order by viewCount desc limit 10",myconnection)
-        st.write(df_3)
-        fig3 = px.bar(df_3,x='Video_Id',y='View_count',hover_name="Video_title",color="Channel_name",title="Top 10 videos vs View Count")
-        fig3.update_layout(title_x=0.3)
-        st.plotly_chart(fig3)
-
-    elif question == quest_4:
-        st.write(pd.read_sql_query("SELECT v_title as Video_names,commentCount as Number_of_comments FROM youtube.videos",myconnection))
-        df_4 = pd.read_sql_query("SELECT c_name as Channel_name, avg(viewCount) as View_Count_AVG,sum(commentCount) as Overall_Comment_Count from youtube.videos group by c_name",myconnection)
-        fig4 = px.bar(df_4,x='Channel_name',y='Overall_Comment_Count',color="View_Count_AVG",title="Channel and their overall comment count")
-        fig4.update_layout(title_x=0.3)
-        st.plotly_chart(fig4)
-
-    elif question == quest_5:
-        st.write(pd.read_sql_query("SELECT v_title as Video_names,c_name as Channel_name FROM youtube.videos where likeCount in (SELECT max(likeCount) FROM youtube.videos)",myconnection)) 
-        df_5 = pd.read_sql_query("SELECT * FROM youtube.videos order by likeCount desc limit 10;",myconnection)
-        fig5 = px.pie(df_5,names='v_id',values='likeCount',hover_name="v_title",title="Like Count of top 10 videos")
-        st.plotly_chart(fig5)
-
-    elif question == quest_6:
-        st.write(pd.read_sql_query("SELECT v_title as Video_name,likeCount as Number_of_likes,dislikeCount as Number_of_dislikes FROM youtube.videos",myconnection)) 
-        df_6 = pd.read_sql_query("SELECT c_name as Channel_name,sum(likeCount) as Overall_Like_Count from youtube.videos group by c_name",myconnection)
-        fig6 = px.line(df_6,x='Channel_name',y='Overall_Like_Count',title="Like Count of all the channels")
-        fig6.update_layout(title_x=0.3)
-        st.plotly_chart(fig6)
+    if question == questions[0]:
+        df = execute_query("SELECT v_title AS Video_name, c_name AS Channel_name FROM youtube.videos")
+        st.write(df)
+        channel_df = execute_query("SELECT * FROM youtube.channel")
+        create_plot(channel_df, 'pie', names='channel_name', values='number_of_videos', hole=0.5, title="Video Count in each Channel")
     
-    elif question == quest_7:
-        st.write(pd.read_sql_query("SELECT  channel_id as Channel_id,channel_name as Channel_name,views as View_count FROM youtube.channel",myconnection))
-        df_7 = pd.read_sql_query("SELECT * FROM youtube.channel",myconnection)
-        fig7 = px.bar(df_7,x='channel_name',y='views',title="View Count of all the channels",color="number_of_videos",hover_name="number_of_subscribers")
-        fig7.update_layout(title_x=0.3)
-        st.plotly_chart(fig7)
+    elif question == questions[1]:
+        df = execute_query("SELECT channel_name AS Channel_name, number_of_videos AS Video_count FROM youtube.channel WHERE number_of_videos IN (SELECT MAX(number_of_videos) FROM youtube.channel)")
+        st.write(df)
+        channel_df = execute_query("SELECT * FROM youtube.channel")
+        create_plot(channel_df, 'bar', x='channel_name', y='number_of_videos', color='views', title="Channel vs Video Count")
     
-    elif question == quest_8:
-        st.write(pd.read_sql_query("SELECT distinct c_name as Channel_name FROM youtube.videos where year(pub_date)=2022",myconnection))
-        df_8 = pd.read_sql_query("SELECT * FROM youtube.videos where year(pub_date)=2022",myconnection)
-        fig8 = px.bar(df_8,x='c_id',y='viewCount',title="Channel View Count in 2022",color="c_name")
-        fig8.update_layout(title_x=0.3)
-        st.plotly_chart(fig8)
+    elif question == questions[2]:
+        df = execute_query("SELECT v_id AS Video_Id, v_title AS Video_title, c_name AS Channel_name, viewCount AS View_count FROM youtube.videos ORDER BY viewCount DESC LIMIT 10")
+        st.write(df)
+        create_plot(df, 'bar', x='Video_Id', y='View_count', hover_name="Video_title", color="Channel_name", title="Top 10 videos vs View Count")
     
-    elif question == quest_9:
-        df_9 = pd.read_sql_query("SELECT c_name as Channel_name,avg(durationinsec) as Average_duration_seconds FROM youtube.videos group by c_name",myconnection)
-        st.write(df_9)
-        fig9 = px.pie(df_9,names='Channel_name',values='Average_duration_seconds',hole=0.5,title="Channel name and its average duration in seconds")
-        st.plotly_chart(fig9)
+    elif question == questions[3]:
+        df = execute_query("SELECT v_title AS Video_names, commentCount AS Number_of_comments FROM youtube.videos")
+        st.write(df)
+        channel_df = execute_query("SELECT c_name AS Channel_name, AVG(viewCount) AS View_Count_AVG, SUM(commentCount) AS Overall_Comment_Count FROM youtube.videos GROUP BY c_name")
+        create_plot(channel_df, 'bar', x='Channel_name', y='Overall_Comment_Count', color="View_Count_AVG", title="Channel and their overall comment count")
+    
+    elif question == questions[4]:
+        df = execute_query("SELECT v_title AS Video_names, c_name AS Channel_name FROM youtube.videos WHERE likeCount IN (SELECT MAX(likeCount) FROM youtube.videos)")
+        st.write(df)
+        top_liked_videos_df = execute_query("SELECT * FROM youtube.videos ORDER BY likeCount DESC LIMIT 10")
+        create_plot(top_liked_videos_df, 'pie', names='v_id', values='likeCount', hover_name="v_title", title="Like Count of top 10 videos")
+    
+    elif question == questions[5]:
+        df = execute_query("SELECT v_title AS Video_name, likeCount AS Number_of_likes, dislikeCount AS Number_of_dislikes FROM youtube.videos")
+        st.write(df)
+        channel_df = execute_query("SELECT c_name AS Channel_name, SUM(likeCount) AS Overall_Like_Count FROM youtube.videos GROUP BY c_name")
+        create_plot(channel_df, 'line', x='Channel_name', y='Overall_Like_Count', title="Like Count of all the channels")
+    
+    elif question == questions[6]:
+        df = execute_query("SELECT channel_id AS Channel_id, channel_name AS Channel_name, views AS View_count FROM youtube.channel")
+        st.write(df)
+        channel_df = execute_query("SELECT * FROM youtube.channel")
+        create_plot(channel_df, 'bar', x='channel_name', y='views', title="View Count of all the channels", color="number_of_videos", hover_name="number_of_subscribers")
+    
+    elif question == questions[7]:
+        df = execute_query("SELECT DISTINCT c_name AS Channel_name FROM youtube.videos WHERE YEAR(pub_date) = 2022")
+        st.write(df)
+        channel_2022_df = execute_query("SELECT * FROM youtube.videos WHERE YEAR(pub_date) = 2022")
+        create_plot(channel_2022_df, 'bar', x='c_id', y='viewCount', title="Channel View Count in 2022", color="c_name")
+    
+    elif question == questions[8]:
+        df = execute_query("SELECT c_name AS Channel_name, AVG(durationinsec) AS Average_duration_seconds FROM youtube.videos GROUP BY c_name")
+        st.write(df)
+        create_plot(df, 'pie', names='Channel_name', values='Average_duration_seconds', hole=0.5, title="Channel name and its average duration in seconds")
+    
+    elif question == questions[9]:
+        df = execute_query("SELECT v_title AS Video_name, c_name AS Channel_name, commentCount AS Number_of_comments FROM youtube.videos WHERE commentCount IN (SELECT MAX(commentCount) FROM youtube.videos)")
+        st.write(df)
+        all_videos_df = execute_query("SELECT * FROM youtube.videos")
+        create_plot(all_videos_df, 'scatter', x="viewCount", y="commentCount", color="c_name", title="View Count vs Comment Count", labels={'viewCount': 'View Count', 'commentCount': 'Comment Count'})
 
-    elif question == quest_10:
-        st.write(pd.read_sql_query("SELECT v_title as Video_name,c_name as Channel_name,commentCount as Number_of_comments FROM youtube.videos where commentCount in (SELECT max(commentCount) FROM youtube.videos)",myconnection))
-        df_10 = pd.read_sql_query("SELECT * from youtube.videos",myconnection)
-        fig10 = px.scatter(df_10,x="viewCount",y="commentCount",color="c_name",title="View Count vs Comment Count",labels={'viewCount': 'View Count', 'commentCount': 'Comment Count'})
-        fig10.update_layout(title_x=0.3)
-        st.plotly_chart(fig10)
