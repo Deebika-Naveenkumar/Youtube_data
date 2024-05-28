@@ -136,7 +136,7 @@ def get_channel_details(channel_id):
             'views': int(response['items'][0]['statistics']['viewCount']),
             'number_of_videos': int(response['items'][0]['statistics']['videoCount']),
             'playlist_id': response['items'][0]['contentDetails']['relatedPlaylists']['uploads'],
-            'published_date': parse_time(response['items'][0]["snippet"]["publishedAt"])
+            'published_date': parse_time(response['items'][0]["snippet"]["publishedAt"]).strftime('%Y-%m-%d %H:%M:%S')
             }
     channel_data.append(data)
     
@@ -212,7 +212,7 @@ def get_video_details(v_ids):
             "c_name": response['items'][0]["snippet"]["channelTitle"],
             "v_id": response['items'][0]["id"],
             "v_title": response['items'][0]["snippet"]["title"],
-            "pub_date": parse_time(response['items'][0]["snippet"]["publishedAt"]),
+            "pub_date": parse_time(response['items'][0]["snippet"]["publishedAt"]).strftime('%Y-%m-%d %H:%M:%S'),
             "duration": parse_duration(response['items'][0]["contentDetails"]["duration"]),
             "viewCount": int(response['items'][0]["statistics"]["viewCount"]),
             "likeCount": like_count, 
@@ -246,7 +246,7 @@ def get_video_comments(video_ids):
                         'comment_id':item['snippet']['topLevelComment']['id'],
                         'comment_desc':item['snippet']['topLevelComment']['snippet']['textDisplay'],
                         'comment_author':item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
-                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt'])
+                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt']).strftime('%Y-%m-%d %H:%M:%S')
                     }
                     all_comments.append(data)
             
@@ -266,7 +266,7 @@ def get_video_comments(video_ids):
                         'comment_id':item['snippet']['topLevelComment']['id'],
                         'comment_desc':item['snippet']['topLevelComment']['snippet']['textDisplay'],
                         'comment_author':item['snippet']['topLevelComment']['snippet']['authorDisplayName'],
-                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt'])
+                        'comment_published_date':parse_time(item['snippet']['topLevelComment']['snippet']['publishedAt']).strftime('%Y-%m-%d %H:%M:%S')
                     }
                     all_comments.append(data)
 
